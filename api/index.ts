@@ -1,11 +1,12 @@
-
-import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
-
-// ==================== CONFIGURATION ====================
 export const config = { runtime: 'edge' };
 
-const MODELS = [
-    "gemini-3-flash-preview",   // Worker 1
+export default async function handler(req: Request) {
+    return new Response(JSON.stringify({ status: "ok", message: "Server is alive" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+    });
+}
+"gemini-3-flash-preview",   // Worker 1
     "gemini-2.0-flash-001",     // Worker 2
     "gemini-2.5-flash-lite",    // Worker 3
     "gemini-2.5-pro"            // Judge (Tie-Breaker)
