@@ -1,10 +1,208 @@
+
 export const config = { runtime: 'edge' };
 
-export default async function handler(req: Request) {
-    return new Response(JSON.stringify({ status: "ok", message: "Server is alive" }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" }
-    });
+// ==================== CONFIGURATION ====================
+const MODELS = [
+    "gemini-2.0-flash",         // Worker 1 (Fast & Smart)
+    "gemini-1.5-flash",         // Worker 2 (Reliable)
+    "gemini-1.5-pro",           // Judge (High Reasoning)
+];
+
+const API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
+const ENSEMBLE_MODE = true;
+const CONFIDENCE_THRESHOLD = 90;
+const TTL_MS = 120 * 1000;
+
+// ==================== STATE ====================
+const recentAnswers = new Map<string, { answer: string; ts: number }>();
+let requestCounter = 0;
+
+// ==================== API KEY ====================
+const apiKey = process.env.GEMINI_API_KEY;
+
+// ==================== HELPER: CALL GEMINI REST API ====================
+async function callGeminiREST(model: string, prompt: string, imageBase64?: string): Promise<{ text: string, error?: string }> {
+    if (!apiKey) return { text: "", error: "Missing API Key" };
+
+    const url = `${API_BASE}/${model}:generateContent?key=${apiKey}`;
+
+    // Construct Payload
+    const parts: any[] = [{ text: prompt }];
+    if (imageBase64) {
+        // Remove header if exists
+        const cleanData = imageBase64.replace(/^data:image\/\w+;base64,/, "");
+        parts.push({
+            inline_data: {
+                mime_type: "image/jpeg",
+                data: cleanData
+            }
+        });
+    }
+
+    const payload = {
+        contents: [{ parts: parts }],
+        generationConfig: {
+            temperature: 0.4,
+            maxOutputTokens: 8192
+        }
+    };
+
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+            const errText = await response.text();
+            return { text: "", error: `API Error ${response.status}: ${errText}` };
+        }
+
+        const data: any = await response.json();
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        return { text: text };
+
+    } catch (e: any) {
+        return { text: "", error: e.message };
+    }
+}
+
+// ==================== LOGIC UTILS ====================
+function normalizePrompt(s: string = ""): string {
+    return String(s).replace(/\s+/g, " ").trim();
+}
+
+function vacuum(): void {
+    const now = Date.now();
+    for (const [k, v] of recentAnswers) {
+        if (now - v.ts > TTL_MS) recentAnswers.delete(k);
+    }
+}
+
+function parseAnswerWithConfidence(rawText: string | null): { answer: string; confidence: number } {
+    if (!rawText) return { answer: "", confidence: 50 };
+    const text = rawText.trim();
+
+    // Try JSON
+    try {
+        const jsonMatch = text.match(/\{[\s\S]*?"answer"[\s\S]*?\}/);
+        if (jsonMatch) {
+            const cleanJson = jsonMatch[0].replace(/```json|```/g, "").trim();
+            const parsed = JSON.parse(cleanJson);
+            return {
+                answer: String(parsed.answer || "").toUpperCase(),
+                confidence: parseInt(parsed.confidence) || 70
+            };
+        }
+    } catch (_) { }
+
+    // Fallback Patterns
+    const letters = text.toUpperCase().match(/[A-F]/g);
+    if (letters && letters.length > 0) {
+        return { answer: [...new Set(letters)].join(", "), confidence: 60 };
+    }
+
+    return { answer: "", confidence: 0 };
+}
+
+function buildPrompt(input: any): string {
+    if (typeof input === "string") return input; // Simplified
+
+    let p = `You are a MikroTik exam expert. Analyze the question and image (if present).\n\n`;
+    p += `Question: ${input.question}\n`;
+    if (input.options) {
+        input.options.forEach((opt: any) => {
+            p += `${opt.label}. ${opt.text}\n`;
+        });
+    }
+    p += `\nProvide the correct answer in JSON format:\n{"answer": "A", "confidence": 90}\n`;
+    p += `Reasoning first, then JSON.\n`;
+    return p;
+}
+
+// ==================== HANDLER ====================
+export default async function handler(req: Request): Promise<Response> {
+    const cors = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+    };
+
+    if (req.method === "OPTIONS") return new Response(null, { headers: cors });
+
+    if (req.method === "GET") {
+        return new Response(JSON.stringify({ status: "alive", mode: "REST_API" }), {
+            status: 200, headers: { ...cors, "Content-Type": "application/json" }
+        });
+    }
+
+    if (req.method === "POST" && new URL(req.url).pathname.endsWith("/ask")) {
+        try {
+            const body = await req.json();
+            const input = body.prompt;
+            if (!input) throw new Error("No prompt");
+
+            // Cache Key
+            const key = typeof input === "string" ? normalizePrompt(input) : normalizePrompt(input.question);
+            vacuum();
+
+            if (recentAnswers.has(key)) {
+                return new Response(JSON.stringify({ ...recentAnswers.get(key), cached: true }), {
+                    status: 200, headers: { ...cors, "Content-Type": "application/json" }
+                });
+            }
+
+            const promptText = buildPrompt(input);
+            const image = (typeof input === 'object' && input.image) ? input.image : undefined;
+            const startTime = Date.now();
+
+            let finalResult: { answer: string, confidence: number } = { answer: "", confidence: 0 };
+
+            // Logic: Try Model 1. If confidence < 80, Try Model 2 (Ensemble-ish)
+            // Simplified for reliability first
+            console.log(`🤖 Processing: ${key.substring(0, 30)}... [Image: ${!!image}]`);
+
+            const r1 = await callGeminiREST(MODELS[0], promptText, image);
+            const p1 = parseAnswerWithConfidence(r1.text);
+
+            if (p1.confidence >= 85 || !ENSEMBLE_MODE) {
+                finalResult = p1;
+            } else {
+                // Try Model 2 as backup check
+                const r2 = await callGeminiREST(MODELS[2], promptText, image); // Use Pro for better reasoning
+                const p2 = parseAnswerWithConfidence(r2.text);
+
+                // If Pro is more confident, take it
+                finalResult = (p2.confidence > p1.confidence) ? p2 : p1;
+            }
+
+            if (!finalResult.answer) {
+                return new Response(JSON.stringify({ error: "No answer found", raw: r1.text }), {
+                    status: 500, headers: { ...cors, "Content-Type": "application/json" }
+                });
+            }
+
+            const responseData = {
+                answer: finalResult.answer,
+                confidence: finalResult.confidence,
+                responseTimeMs: Date.now() - startTime
+            };
+
+            recentAnswers.set(key, { answer: finalResult.answer, ts: Date.now() });
+
+            return new Response(JSON.stringify(responseData), {
+                status: 200, headers: { ...cors, "Content-Type": "application/json" }
+            });
+
+        } catch (e: any) {
+            return new Response(JSON.stringify({ error: e.message }), {
+                status: 400, headers: { ...cors, "Content-Type": "application/json" }
+            });
+        }
+    }
+
+    return new Response("Not Found", { status: 404 });
 }
 "gemini-3-flash-preview",   // Worker 1
     "gemini-2.0-flash-001",     // Worker 2
