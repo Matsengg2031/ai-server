@@ -6,6 +6,10 @@
     "dependencies": {
         "@google/generative-ai": "^0.21.0"
     },
+    "devDependencies": {
+        "@types/node": "^20.0.0",
+        "typescript": "^5.0.0"
+    },
     "engines": {
         "node": ">=18.x"
     }
