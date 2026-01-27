@@ -1,4 +1,4 @@
-export const config = { runtime: 'edge' };
+// Node.js Runtime (Default)
 
 export default async function handler(req: Request) {
     return new Response(JSON.stringify({ status: "ok", message: "Server is alive" }), {
