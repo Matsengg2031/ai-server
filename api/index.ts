@@ -41,6 +41,7 @@ interface QuestionInput {
     options?: QuestionOption[];
     type?: string;
     number?: number;
+    image?: string; // Base64 image
 }
 
 interface ModelResult {
@@ -194,6 +195,10 @@ JSON:
         prompt += `First, write your "Reasoning: ..." block.\n`;
         prompt += `Then, write "JSON: {"answer": "...", "confidence": ...}" on a new line.\n`;
 
+        if (input.image) {
+            prompt += `\n[IMAGE DETECTED] An image is provided with this question. Analyze the image carefully.\n`;
+        }
+
         return prompt;
     }
     return "";
@@ -300,12 +305,26 @@ function parseAnswerWithConfidence(rawText: string | null): { answer: string; co
 
 // ==================== SINGLE MODEL CALL ====================
 // ==================== SINGLE MODEL CALL (WITH RETRY) ====================
-async function callSingleModel(model: string, prompt: string, retries = 3): Promise<ModelResult> {
+async function callSingleModel(model: string, prompt: string, imageBase64?: string, retries = 3): Promise<ModelResult> {
     for (let attempt = 1; attempt <= retries; attempt++) {
         try {
             const genModel = ai.getGenerativeModel({ model });
+
+            // Construct parts (Text + Optional Image)
+            const parts: any[] = [{ text: prompt }];
+            if (imageBase64) {
+                // Clean header if present (data:image/jpeg;base64,...)
+                const cleanData = imageBase64.replace(/^data:image\/\w+;base64,/, "");
+                parts.push({
+                    inlineData: {
+                        mimeType: "image/jpeg",
+                        data: cleanData
+                    }
+                });
+            }
+
             const response = await genModel.generateContent({
-                contents: [{ role: "user", parts: [{ text: prompt }] }],
+                contents: [{ role: "user", parts: parts }],
                 generationConfig: {
                     temperature: 0.4, // Seimbang
                     maxOutputTokens: 8192,
@@ -480,12 +499,12 @@ function _confidenceWeightedVote(modelResults: ModelResult[]): VotingResult {
 }
 
 // ==================== ENSEMBLE CALL (JUDGE MODE) ====================
-async function callGeminiEnsemble(prompt: string, options: QuestionOption[] = []): Promise<VotingResult> {
+async function callGeminiEnsemble(prompt: string, options: QuestionOption[] = [], imageBase64?: string): Promise<VotingResult> {
     console.log(`🎯 Judge Mode: Running 3 Workers Parallel...`);
 
     // 1. Run Worker 1, Worker 2 & Worker 3 in parallel
     const workers = [MODELS[0], MODELS[1], MODELS[2]];
-    const promises = workers.map(model => callSingleModel(model, prompt));
+    const promises = workers.map(model => callSingleModel(model, prompt, imageBase64));
     const results = await Promise.all(promises);
 
     // Log Worker Results
@@ -577,7 +596,7 @@ async function callGeminiEnsemble(prompt: string, options: QuestionOption[] = []
     // 3. No majority (all 3 different or failures) -> Call JUDGE (Model 4)
     console.log(`   ⚖️  No majority. Calling JUDGE (${MODELS[3]})...`);
 
-    const judgeResult = await callSingleModel(MODELS[3], prompt);
+    const judgeResult = await callSingleModel(MODELS[3], prompt, imageBase64);
 
     if (judgeResult.success) {
         console.log(`   👨‍⚖️ Judge Decision: ${judgeResult.answer} (${judgeResult.confidence}%)`);
@@ -603,10 +622,10 @@ async function callGeminiEnsemble(prompt: string, options: QuestionOption[] = []
 }
 
 // ==================== FAILOVER CALL (Non-Ensemble) ====================
-async function callGeminiWithFailover(prompt: string): Promise<{ result: string; model: string; confidence: number }> {
+async function callGeminiWithFailover(prompt: string, imageBase64?: string): Promise<{ result: string; model: string; confidence: number }> {
     for (let i = 0; i < MODELS.length; i++) {
         const model = MODELS[i];
-        const result = await callSingleModel(model, prompt);
+        const result = await callSingleModel(model, prompt, imageBase64);
 
         if (result.success) {
             return { result: result.answer!, model, confidence: result.confidence! };
@@ -628,14 +647,15 @@ async function processRequestDirectly(key: string, rawPrompt: string | QuestionI
         // 🤖 AI Fallback: Use Ensemble or Single Model
         const prompt = buildPrompt(rawPrompt);
         const options = (typeof rawPrompt === 'object' && rawPrompt.options) ? rawPrompt.options : [];
+        const image = (typeof rawPrompt === 'object' && rawPrompt.image) ? rawPrompt.image : undefined;
 
         if (ENSEMBLE_MODE) {
-            const voting = await callGeminiEnsemble(prompt, options);
+            const voting = await callGeminiEnsemble(prompt, options, image);
             finalAnswer = voting.finalAnswer;
             confidence = voting.finalConfidence;
             modelInfo = `ENSEMBLE [${voting.method}]`;
         } else {
-            const { result, model, confidence: conf } = await callGeminiWithFailover(prompt);
+            const { result, model, confidence: conf } = await callGeminiWithFailover(prompt, image);
             finalAnswer = result;
             confidence = conf;
             modelInfo = model;
