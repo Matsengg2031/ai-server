@@ -2,7 +2,7 @@
     "name": "ai-server-vercel",
     "version": "1.0.0",
     "description": "AI Server for Vercel",
-    "main": "api/index.ts",
+    "main": "api/index.js",
     "dependencies": {
         "@google/generative-ai": "^0.21.0"
     },
