@@ -18,7 +18,15 @@ const recentAnswers = new Map<string, { answer: string; ts: number }>();
 let requestCounter = 0;
 
 // ==================== API KEY ====================
-const apiKey = process.env.GEMINI_API_KEY;
+// Safe access for Edge Runtime
+const getEnv = (key: string) => {
+    try {
+        return process.env[key];
+    } catch (e) {
+        return undefined;
+    }
+};
+const apiKey = getEnv("GEMINI_API_KEY");
 
 // ==================== HELPER: CALL GEMINI REST API ====================
 async function callGeminiREST(model: string, prompt: string, imageBase64?: string): Promise<{ text: string, error?: string }> {
