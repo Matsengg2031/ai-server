@@ -20,7 +20,7 @@ const recentAnswers = new Map();
 // ==================== ACCESS ENV SAFELY ====================
 const apiKey = process.env.GEMINI_API_KEY;
 
-// ==================== HELPER: CALL GEMINI REST API ====================
+// ==================== HELPER: CALL GEMINI REST API (WITH TIMEOUT) ====================
 async function callGeminiREST(model, prompt, imageBase64) {
     if (!apiKey) return { success: false, model, error: "Missing API Key" };
 
@@ -47,21 +47,25 @@ async function callGeminiREST(model, prompt, imageBase64) {
     };
 
     try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s Timeout
+
         const response = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+            body: JSON.stringify(payload),
+            signal: controller.signal
         });
+        clearTimeout(timeoutId);
 
         if (!response.ok) {
             const errText = await response.text();
-            // Handle Model Not Found by falling back?
             return { success: false, model, error: `API Error ${response.status}: ${errText}` };
         }
 
         const data = await response.json();
         const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-        return { success: true, answer: text, confidence: 0, model, raw: text }; // Confidence parsed later
+        return { success: true, answer: text, confidence: 0, model, raw: text };
 
     } catch (e) {
         if (e.name === 'AbortError') return { success: false, model, error: "Timeout (15s limit)" };
@@ -216,7 +220,7 @@ module.exports = async (req, res) => {
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
     if (req.method === 'OPTIONS') { res.status(200).end(); return; }
-    if (req.method === 'GET') { res.status(200).json({ status: "alive", mode: "FULL_ENSEMBLE_RESTORED" }); return; }
+    if (req.method === 'GET') { res.status(200).json({ status: "alive", mode: "FULL_ENSEMBLE_RESTORED_V2" }); return; }
 
     if (req.method === 'POST') {
         try {
