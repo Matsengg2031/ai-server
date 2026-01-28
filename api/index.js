@@ -64,6 +64,7 @@ async function callGeminiREST(model, prompt, imageBase64) {
         return { success: true, answer: text, confidence: 0, model, raw: text }; // Confidence parsed later
 
     } catch (e) {
+        if (e.name === 'AbortError') return { success: false, model, error: "Timeout (15s limit)" };
         return { success: false, model, error: e.message };
     }
 }
