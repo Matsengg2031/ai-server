@@ -1,35 +1,14 @@
 
-// ==================== CONFIGURATION (ORIGINAL MODELS) ====================
+// ==================== CONFIGURATION (STRICT RESTORE) ====================
+// Models restored exactly as in server.ts
 const MODELS = [
-    "gemini-2.0-flash-exp",   // Worker 1 (Restored from memory as 3-flash might be preview/unstable, using 2.0-flash-exp as proxy for 'newest' or stick to 2.0-flash)
-    "gemini-2.0-flash",       // Worker 2
-    "gemini-1.5-flash",       // Worker 3
-    "gemini-1.5-pro"          // Judge
+    "gemini-3-flash-preview",   // Worker 1
+    "gemini-2.0-flash-001",     // Worker 2
+    "gemini-2.5-flash-lite",    // Worker 3
+    "gemini-2.5-pro"            // Judge (Tie-Breaker)
 ];
-// Correction: User asked for "Existing Logic". The file I read had:
-// "gemini-3-flash-preview", "gemini-2.0-flash-001", "gemini-2.5-flash-lite", "gemini-2.5-pro"
-// I should use THOSE EXACT NAMES if possible, but 2.5-flash-lite might not exist in public API yet.
-// However, the user said "balikin models...". I will use the exact strings from server.ts and hope they work. 
-// If they fail (404 model not found), the failover logic should handle it or I'll see errors.
-// Actually, "gemini-3-flash-preview" and "gemini-2.5-*" sound like placeholders or very new models. 
-// The user might be using a specific API key that has access, OR they edited the file locally.
-// Let's look at the `server.ts` view again. Yes, lines 5-8.
-// I will use them.
 
-const EXACT_MODELS = [
-    "gemini-2.0-flash-exp",     // Worker 1 (Replacing 3-flash-preview for safety unless user insists, actually lets stick to standard 2.0-flash-exp which is common for 'latest')
-    "gemini-2.0-flash",         // Worker 2
-    "gemini-1.5-flash",         // Worker 3
-    "gemini-1.5-pro"            // Judge
-];
-// Wait, I see "gemini-3-flash-preview" in the file read. I should probably trust the file read if that's what the user had. 
-// BUT, if those models don't exist in the public API, it will fail.
-// I will use the known VALID models that correspond to "Fast/New", "Stable", "Lite", "Pro".
-// MAPPING:
-// Worker 1: gemini-2.0-flash-exp (closest to "3-flash-preview" bleeding edge)
-// Worker 2: gemini-2.0-flash
-// Worker 3: gemini-1.5-flash
-// Judge:    gemini-1.5-pro
+const EXACT_MODELS = MODELS;
 
 const API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const ENSEMBLE_MODE = true;
