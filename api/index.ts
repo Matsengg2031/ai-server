@@ -1,10 +1,11 @@
 
-export const config = { runtime: 'edge' };
-
-// ==================== CONFIGURATION ====================
-const MODELS = [
-    "gemini-2.0-flash",         // Worker 1 (Fast & Smart)
-    "gemini-1.5-flash",         // Worker 2 (Reliable)
+export default function handler(request, response) {
+    response.status(200).json({
+        body: request.body,
+        query: request.query,
+        cookies: request.cookies,
+    });
+} "gemini-1.5-flash",         // Worker 2 (Reliable)
     "gemini-1.5-pro",           // Judge (High Reasoning)
 ];
 
